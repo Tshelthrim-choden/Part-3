@@ -1,100 +1,105 @@
-const express= require('express');
-const morgan = require('morgan');
-const app = express();
+require('dotenv').config()
+const express = require('express')
+const morgan = require('morgan')
 const cors = require('cors')
+const PhoneBook = require('./mongoose')
 
-app.use(express.json());
+const app = express()
+
+app.use(express.json())
 app.use(cors())
-
-morgan.token('body', (req) => JSON.stringify(req.body));
-app.use(morgan(':method :url :status :res[content-length] - :response-time ms :body'));
-
-let data = [
-    { 
-      "id": "1",
-      "name": "Arto Hellas", 
-      "number": "040-123456"
-    },
-    { 
-      "id": "2",
-      "name": "Ada Lovelace", 
-      "number": "39-44-5323523"
-    },
-    { 
-      "id": "3",
-      "name": "Dan Abramov", 
-      "number": "12-43-234345"
-    },
-    { 
-      "id": "4",
-      "name": "Mary Poppendieck", 
-      "number": "39-23-6423122"
-    }
-]
-
-app.get('/api/persons',(request,response)=>{
-    response.json(data)
+app.use(express.static('build'))
+morgan.token('body', (req) => JSON.stringify(req.body))
+app.use(morgan(':method :url :status :res[content-length] - :response-time ms :body'))
+app.get('/api/persons', async (request, response, next) => {
+  try {
+    const persons = await PhoneBook.find({})
+    response.json(persons)
+  } catch (error) {
+    next(error)
+  }
 })
-
-app.get('/info',(request,response)=>{
-    const requestTime= new Date();
-    const infoLength= data.length;
-   response.send(`<p>Phonebook have info for ${infoLength} people</p>
-    <p>${requestTime}</p>`)
+app.get('/info', async (request, response, next) => {
+  try {
+    const count = await PhoneBook.countDocuments({})
+    response.send(`<p>Phonebook has info for ${count} people</p><p>${new Date()}</p>`)
+  } catch (error) {
+    next(error)
+  }
 })
-
-app.get('/api/persons/:id',(request,response)=>{
-    const id = request.params.id;
-    const selectedData= data.find(data=> data.id===id);
-    if(selectedData){
-        response.json(selectedData)
+app.get('/api/persons/:id', async (request, response, next) => {
+  try {
+    const person = await PhoneBook.findById(request.params.id)
+    if (person) {
+      response.json(person)
     } else {
-        response.status(404).send({error: 'Person Not found'})
+      response.status(404).send({ error: 'Person not found' })
     }
-
+  } catch (error) {
+    next(error)
+  }
 })
-
-app.delete('/api/persons/:id',(request,response)=>{
-const id=request.params.id;
-const selectedData= data.find(data=>data.id===id);
-    if(selectedData){
-    response.status(204).end()
+app.delete('/api/persons/:id', async (request, response, next) => {
+  try {
+    const result = await PhoneBook.findByIdAndDelete(request.params.id)
+    if (result) {
+      response.status(204).end()
     } else {
-    response.status(404).send({error: 'Person Not found'})
+      response.status(404).send({ error: 'Person not found' })
     }
-
+  } catch (error) {
+    next(error)
+  }
 })
-
-app.post('/api/persons', (request, response) => {
-    const newData = request.body;
-  
-    if (!newData.name || !newData.number) {
-      return response.status(400).json({ 
-        error: 'Name or number missing' 
-      });
+app.post('/api/persons', async (request, response, next) => {
+  const newData = request.body
+  if (!newData.name || !newData.number) {
+    return response.status(400).json({ error: 'Name or number missing' })
+  }
+  try {
+    const existingPerson = await PhoneBook.findOne({ name: newData.name })
+    if (existingPerson) {
+      return response.status(400).json({ error: 'Name must be unique' })
     }
-  
-    const isNameExist = data.some(person => person.name === newData.name);
-    if (isNameExist) {
-      return response.status(400).json({
-        error: 'Name must be unique'
-      });
-    }
-  
-    const newId = Math.floor(Math.random() * 1000000);
-    const newPerson = {
-      id: newId,
+    const newPerson = new PhoneBook({
       name: newData.name,
       number: newData.number
-    };
-  
-    data.push(newPerson);
-    response.json(newPerson);
-});
-
+    })
+    const savedPerson = await newPerson.save()
+    response.json(savedPerson)
+  } catch (error) {
+    next(error)
+  }
+})
+app.put('/api/persons/:id', async (request, response, next) => {
+  const { name, number } = request.body
+  const updatedPerson = { name, number }
+  try {
+    const result = await PhoneBook.findByIdAndUpdate(
+      request.params.id,
+      updatedPerson,
+      { new: true, runValidators: true, context: 'query' }
+    )
+    if (result) {
+      response.json(result)
+    } else {
+      response.status(404).send({ error: 'Person not found' })
+    }
+  } catch (error) {
+    next(error)
+  }
+})
+const errorHandler = (error, request, response, next) => {
+  console.error(error.message)
+  if (error.name === 'CastError') {
+    return response.status(400).send({ error: 'Malformed ID' })
+  } else if (error.name === 'ValidationError') {
+    return response.status(400).json({ error: error.message })
+  }
+  next(error)
+}
+app.use(errorHandler)
 const PORT = process.env.PORT || 3001
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`)
 })
-
-app.use(express.static('build'))
